@@ -12,10 +12,16 @@
         :root { --sidebar-w: 220px; }
         body  { background: #f1f3f5; }
         #sidebar {
-            width: var(--sidebar-w); height: 100vh;
-            position: fixed; top: 0; left: 0;
-            overflow-y: auto; overflow-x: hidden;
-            background: #1e2a38; position: fixed; top: 0; left: 0;
+            width: var(--sidebar-w);
+            height: 100vh;
+            max-height: 100dvh;
+            position: fixed;
+            top: 0;
+            left: 0;
+            overflow-y: auto;
+            overflow-x: hidden;
+            overscroll-behavior: contain;
+            background: #1e2a38;
         }
         #sidebar .brand { padding: 1rem 1.2rem; color: #fff; font-weight: 700; font-size: 1.1rem; border-bottom: 1px solid #2d3f54; }
         #sidebar .nav-link { color: #a8b7c7; padding: .5rem 1.2rem; font-size: .875rem; }
