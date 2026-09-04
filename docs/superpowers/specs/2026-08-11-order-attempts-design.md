@@ -1,6 +1,6 @@
 # 주문 시도(order_attempts) 분리 — 주문내역에 결제 완료건만 남기기
 
-> 이슈 [#214](https://github.com/pushwing/AICopia/issues/214)
+> 이슈 [#214](https://github.com/aivance-kr/AICopia/issues/214)
 
 ## 배경
 

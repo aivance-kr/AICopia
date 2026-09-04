@@ -1,6 +1,6 @@
 # 추가구성상품(애드온) 설계
 
-- 이슈: [#147](https://github.com/pushwing/AICopia/issues/147)
+- 이슈: [#147](https://github.com/aivance-kr/AICopia/issues/147)
 - 작성일: 2026-08-10
 - 상태: 승인됨 (구현 대기)
 
