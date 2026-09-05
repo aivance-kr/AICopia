@@ -17,11 +17,15 @@
 ## 명령어
 
 ```bash
-php spark serve --port 8303  # 개발 서버 실행 (http://localhost:8303)
+php spark serve --host 127.0.0.1 --port 8303  # 개발 서버 실행 (copia.test, Caddy 리버스 프록시 경유)
 php spark migrate            # 대기 중인 마이그레이션 전체 실행 (테이블 생성 + 시드)
 php spark migrate:rollback   # 마지막 마이그레이션 배치 롤백
 php spark db:seed <Seeder>   # 시더 실행 (예: ProductSeeder, PostSeeder)
+```
 
+> ⚠️ **`--host` 를 빼면 `copia.test` 접속이 `502 Bad Gateway` 로 실패한다.** 기본값 `localhost` 는 이 macOS 환경에서 IPv6(`::1`)로만 리슨되는데, `copia.test` 를 프록시하는 공용 Caddy(`~/claude-works/dev-proxy/Caddyfile`)는 `127.0.0.1:8303`(IPv4)로 연결을 시도해 거부당한다. 반드시 `--host 127.0.0.1` 을 명시할 것.
+
+```bash
 composer test                # PHPUnit
 composer analyse             # PHPStan (레벨 6)
 composer cs                  # 코드 스타일 검사 (PHP-CS-Fixer, dry-run)
@@ -330,9 +334,11 @@ $rows = $spreadsheet->getActiveSheet()->toArray();
 **검증 게이트 정책: 검증은 로컬에서 끝낸다.** `feature/* → dev` PR에는 CI를 걸지 않고(로컬 pre-push 훅이 실질 게이트), CI는 `dev → main` 배포 PR에서만 돈다. 세부 근거·pre-push 훅 동작·self-hosted 러너 등록 방법은 → @.claude/rules/testing.md (0·5번 섹션)
 
 - **GitHub Actions**(`.github/workflows/ci.yml`)는 **`main` 대상 PR에서만** 실행(`on.pull_request.branches: [main]`) — `dev`로 가는 PR·어떤 브랜치로의 push에도 CI가 돌지 않는다:
-  - `static` 잡 — `composer cs` + `composer analyse` + `composer audit`(의존성 취약점).
-  - `test` 잡 — `docker run`으로 MySQL 컨테이너 기동(호스트 포트 13306) → `tests` DB 마이그레이션 → `composer test:parallel`.
-- **self-hosted 러너**(`runs-on: [self-hosted, macOS, ARM64]`)에서 세 잡 모두 돈다 — GitHub 호스팅 러너(`ubuntu-latest`)가 아니라 이 저장소를 로컬 개발하는 Mac을 러너로 등록해 사용(계정 결제 문제로 호스팅 러너가 막혔던 게 계기). PHP/Composer는 러너 머신에 이미 설치된 로컬 개발 환경을 그대로 쓴다.
+  - `quality` 잡(단일) — `composer cs` + `composer analyse` + `composer audit`(의존성 취약점) → `docker run`으로 MySQL 컨테이너 기동(호스트 포트 13306) → `tests` DB 마이그레이션 → worker DB 복제 → `composer test:coverage`(ParaTest 4-worker + 커버리지).
+  - 커버리지는 별도 잡으로 두지 않는다 — 러너가 1대뿐이라 잡을 쪼개면 checkout·`composer install`·MySQL 기동이 중복되고 같은 스위트를 두 번 돌리게 된다. `build/coverage.txt`는 잡 서머리에, `build/cobertura.xml`은 PR 고정 코멘트로 게시된다(둘 다 `continue-on-error` — 게시 실패가 게이트를 막지 않는다).
+  - PHP는 `shivammathur/setup-php`를 쓰지 않는다 — self-hosted 러너에서 런타임을 다시 설치·relink 하다 다른 프로젝트 러너와 충돌한다. 대신 러너에 설치된 PHP를 그대로 쓰되, PHP 8.5 이상인지와 커버리지 드라이버(pcov/xdebug) 유무를 첫 스텝에서 검사해 환경이 어긋나면 즉시 실패시킨다.
+  - worker DB 복제(`bin/clone-test-dbs.sh`)는 러너 호스트가 아니라 **MySQL 컨테이너 안의 클라이언트**로 돈다(`MYSQL_DOCKER_CONTAINER`). 러너의 `mysqldump`가 MariaDB 판이면 MySQL 전용 옵션을 몰라 옵션 파싱 단계에서 죽는다(`unknown variable 'set-gtid-purged=OFF'`, exit 7).
+- **self-hosted 러너**(`runs-on: [self-hosted, Linux, X64]`)에서 두 잡 모두 돈다 — GitHub 호스팅 러너(`ubuntu-latest`)가 아니라 self-hosted Linux(X64) 머신을 러너로 등록해 사용(계정 결제 문제로 호스팅 러너가 막혔던 게 계기). PHP/Composer는 러너 머신에 이미 설치된 환경을 그대로 쓴다.
 - 이 저장소는 표준 CI4 스켈레톤(`app/Config/App.php`·`Constants.php`·`system/`·`public/index.php`·`spark`)을 **gitignore** 하고 커스텀 Config만 추적한다. CI는 `vendor/codeigniter4/framework`에서 누락 스켈레톤을 복원(없는 항목만 복사 + `system` 심링크)한 뒤 검사를 돌린다. 로컬도 동일 방식으로 복원 가능.
 - 권장: GitHub 브랜치 보호 규칙으로 `main`·`dev` 직접 push 차단 + `main` 대상 PR은 CI 통과를 머지 조건으로 설정(`dev` 대상 PR은 CI가 없으므로 코드 리뷰 승인만 조건으로).
 

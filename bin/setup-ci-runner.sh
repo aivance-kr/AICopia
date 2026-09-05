@@ -1,45 +1,45 @@
 #!/usr/bin/env bash
 #
-# self-hosted GitHub Actions 러너를 이 Mac에 등록한다 (.github/workflows/ci.yml의
-# runs-on: [self-hosted, macOS, ARM64] 잡을 실행하기 위한 1회성 셋업).
+# self-hosted GitHub Actions 러너를 이 Linux 머신에 등록한다 (.github/workflows/ci.yml의
+# runs-on: [self-hosted, Linux, X64] 잡을 실행하기 위한 1회성 셋업).
 #
 # 동작:
 #   1. gh CLI로 저장소 등록 토큰을 자동 발급(실패 시 수동 입력으로 폴백)
-#   2. GitHub 공식 릴리스에서 최신 러너 패키지(macOS/ARM64) 다운로드
-#   3. ~/actions-runners/<repo>에 설치 + launchd 서비스로 등록·기동
+#   2. GitHub 공식 릴리스에서 최신 러너 패키지(Linux/X64) 다운로드
+#   3. ~/actions-runners/<repo>에 설치 + systemd 서비스로 등록·기동
 #
-# 요구사항: macOS, curl, tar. gh CLI(선택, 없으면 토큰을 직접 입력받음)
+# 요구사항: Linux(x86_64), curl, tar. gh CLI(선택, 없으면 토큰을 직접 입력받음)
 # 재실행: 이미 등록돼 있으면 아무것도 하지 않고 상태만 출력한다.
 # 삭제하려면: bin/teardown-ci-runner.sh 참고(또는 아래 "제거" 안내 출력 참고)
 #
 # 사용법: bin/setup-ci-runner.sh
 set -euo pipefail
 
-REPO_OWNER="pushwing"
+REPO_OWNER="aivance-kr"
 REPO_NAME="AICopia"
 RUNNER_DIR="${RUNNER_DIR:-$HOME/actions-runners/${REPO_NAME}}"
-RUNNER_NAME="${RUNNER_NAME:-$(hostname -s 2>/dev/null || echo mac)-$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]')}"
-LABELS="self-hosted,macOS,ARM64"
+RUNNER_NAME="${RUNNER_NAME:-$(hostname -s 2>/dev/null || echo linux)-$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]')}"
+LABELS="self-hosted,Linux,X64"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; NC='\033[0m'
 info() { echo -e "${YELLOW}▶ $1${NC}"; }
 ok()   { echo -e "${GREEN}✓ $1${NC}"; }
 die()  { echo -e "${RED}✗ $1${NC}" >&2; exit 1; }
 
-[ "$(uname -s)" = "Darwin" ] || die "이 스크립트는 macOS 전용입니다. (ci.yml이 self-hosted macOS 러너를 기대함)"
+[ "$(uname -s)" = "Linux" ] || die "이 스크립트는 Linux 전용입니다. (ci.yml이 self-hosted Linux 러너를 기대함)"
 
 case "$(uname -m)" in
-  arm64)  RUNNER_ARCH="arm64" ;;
   x86_64) RUNNER_ARCH="x64" ;;
+  aarch64) RUNNER_ARCH="arm64" ;;
   *)      die "지원하지 않는 아키텍처: $(uname -m)" ;;
 esac
 
 # 이미 등록된 러너가 있으면 상태만 보여주고 종료 (중복 등록 방지)
 if [ -f "$RUNNER_DIR/.runner" ]; then
   ok "이미 등록된 러너가 있습니다: $RUNNER_DIR"
-  (cd "$RUNNER_DIR" && ./svc.sh status) || true
+  (cd "$RUNNER_DIR" && sudo ./svc.sh status) || true
   echo "재등록하려면 먼저 제거하세요:"
-  echo "  cd \"$RUNNER_DIR\" && ./svc.sh uninstall && ./config.sh remove --token <제거토큰(저장소 Settings에서 발급)>"
+  echo "  cd \"$RUNNER_DIR\" && sudo ./svc.sh uninstall && ./config.sh remove --token <제거토큰(저장소 Settings에서 발급)>"
   exit 0
 fi
 
@@ -65,7 +65,7 @@ fi
 info "최신 러너 버전 조회 중..."
 LATEST_TAG="$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest | grep -m1 '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')"
 [ -n "$LATEST_TAG" ] || die "최신 러너 버전을 조회하지 못했습니다."
-PKG="actions-runner-osx-${RUNNER_ARCH}-${LATEST_TAG}.tar.gz"
+PKG="actions-runner-linux-${RUNNER_ARCH}-${LATEST_TAG}.tar.gz"
 URL="https://github.com/actions/runner/releases/download/v${LATEST_TAG}/${PKG}"
 
 mkdir -p "$RUNNER_DIR"
@@ -76,7 +76,13 @@ info "압축 해제..."
 tar xzf "${RUNNER_DIR}/${PKG}" -C "$RUNNER_DIR"
 rm -f "${RUNNER_DIR}/${PKG}"
 
-# 3) 등록 + launchd 서비스로 상시화
+# Linux 러너는 의존 라이브러리 설치 스크립트를 함께 제공한다(있으면 실행, 없으면 건너뜀).
+if [ -x "${RUNNER_DIR}/bin/installdependencies.sh" ]; then
+  info "러너 의존성 설치 중 (sudo 필요)..."
+  sudo "${RUNNER_DIR}/bin/installdependencies.sh"
+fi
+
+# 3) 등록 + systemd 서비스로 상시화
 info "러너 등록 (${RUNNER_NAME}, labels=${LABELS})..."
 (
   cd "$RUNNER_DIR"
@@ -88,12 +94,12 @@ info "러너 등록 (${RUNNER_NAME}, labels=${LABELS})..."
     --work "_work" \
     --replace
 
-  info "launchd 서비스로 설치·기동..."
-  ./svc.sh install
-  ./svc.sh start
+  info "systemd 서비스로 설치·기동 (sudo 필요)..."
+  sudo ./svc.sh install
+  sudo ./svc.sh start
 )
 
-ok "완료. Mac이 켜져 있으면 자동으로 CI 잡을 리스닝합니다."
-echo "  상태 확인: (cd \"$RUNNER_DIR\" && ./svc.sh status)"
-echo "  중지:      (cd \"$RUNNER_DIR\" && ./svc.sh stop)"
-echo "  제거:      (cd \"$RUNNER_DIR\" && ./svc.sh uninstall && ./config.sh remove --token <제거토큰>)"
+ok "완료. 머신이 켜져 있으면 systemd가 부팅 시 자동으로 CI 잡을 리스닝합니다."
+echo "  상태 확인: (cd \"$RUNNER_DIR\" && sudo ./svc.sh status)"
+echo "  중지:      (cd \"$RUNNER_DIR\" && sudo ./svc.sh stop)"
+echo "  제거:      (cd \"$RUNNER_DIR\" && sudo ./svc.sh uninstall && ./config.sh remove --token <제거토큰>)"

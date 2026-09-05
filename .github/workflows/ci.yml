@@ -7,81 +7,49 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+# 같은 브랜치에 새 커밋이 올라오면 이전 실행은 취소한다 — self-hosted 러너가 1대라
+# 중복 실행이 쌓이면 뒤 PR 이 계속 대기한다.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # self-hosted 러너에서 돈다 — GitHub 호스팅 러너(ubuntu-latest) 결제 문제로 막힌 게 계기.
-# 러너는 이 저장소를 로컬에서 개발하는 Mac에 등록된 launchd 서비스로 상시 리스닝한다.
+# 러너는 self-hosted Linux(X64) 머신에 상시 리스닝 서비스로 등록돼 있다.
 # (등록 방법·러너 위치는 .claude/rules/testing.md 5번 섹션 참고)
 jobs:
-  # 정적 게이트 — DB 불필요. cs-fixer + PHPStan + 의존성 점검.
-  static:
-    name: 코드 스타일 · 정적 분석
-    runs-on: [self-hosted, macOS, ARM64]
-    steps:
-      - uses: actions/checkout@v4
-
-      # 이 Mac은 다른 프로젝트 self-hosted 러너와 Homebrew php 심링크(/opt/homebrew/opt/php)를
-      # 공유한다. 그쪽 CI가 도는 동안 php@8.4로 relink되면 이 저장소가 요구하는 8.5와 충돌하므로,
-      # 버전이 고정된 /opt/homebrew/opt/php@8.5/bin을 PATH 맨 앞에 강제한다.
-      - name: PHP 8.5 경로 고정
-        run: echo "/opt/homebrew/opt/php@8.5/bin" >> "$GITHUB_PATH"
-
-      - name: PHP/Composer 버전 확인
-        run: php -v && composer --version
-
-      - name: Validate composer.json
-        run: composer validate --strict
-
-      - name: Install dependencies
-        run: composer install --no-interaction --no-progress --prefer-dist
-
-      # 이 저장소는 표준 CI4 스켈레톤(app/Config/App.php·Constants.php·system 등)을
-      # gitignore 하고 커스텀 Config만 추적한다. PHPStan 부트스트랩을 위해 복원한다.
-      - name: Restore CI4 skeleton
-        run: |
-          for src in vendor/codeigniter4/framework/app/Config/*; do
-            dest="app/Config/$(basename "$src")"
-            [ -e "$dest" ] || cp -r "$src" "$dest"
-          done
-          [ -e system ] || ln -s vendor/codeigniter4/framework/system system
-          mkdir -p writable/cache writable/logs writable/session writable/tmp writable/uploads
-
-      - name: 코드 스타일 검사 (PHP-CS-Fixer)
-        run: composer cs
-
-      - name: 정적 분석 (PHPStan)
-        run: composer analyse
-
-      - name: 의존성 취약점 점검 (composer audit)
-        run: composer audit --no-dev || true
-
-  # 단위 테스트 — MySQL을 docker run으로 직접 기동(self-hosted macOS는 services: 컨테이너 미지원).
-  # 이 Mac은 로컬 개발용 시스템 mysqld를 이미 3306에 띄워두므로, CI 전용 컨테이너는
-  # 호스트 포트 13306을 사용해 충돌을 피한다.
-  test:
-    name: 단위 테스트
-    runs-on: [self-hosted, macOS, ARM64]
+  # 품질 게이트 단일 잡 — 스타일·정적 분석·의존성 점검·테스트·커버리지를 한 잡에서 처리한다.
+  # 잡을 쪼개면 러너가 1대뿐인 환경에서 checkout·composer install·MySQL 기동이 중복되고,
+  # 커버리지를 별도 잡으로 두면 같은 스위트를 한 번 더 돌리게 된다.
+  quality:
+    name: 코드 스타일 · 정적 분석 · 테스트 · 커버리지
+    runs-on: [self-hosted, Linux, X64]
+    permissions:
+      contents: read
+      pull-requests: write
     env:
       CI_MYSQL_PORT: '13306'
       CI_MYSQL_CONTAINER: aicopia-ci-mysql-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
 
-      # 이 Mac은 다른 프로젝트 self-hosted 러너와 Homebrew php 심링크(/opt/homebrew/opt/php)를
-      # 공유한다. 그쪽 CI가 도는 동안 php@8.4로 relink되면 이 저장소가 요구하는 8.5와 충돌하므로,
-      # 버전이 고정된 /opt/homebrew/opt/php@8.5/bin을 PATH 맨 앞에 강제한다.
-      - name: PHP 8.5 경로 고정
-        run: echo "/opt/homebrew/opt/php@8.5/bin" >> "$GITHUB_PATH"
-
-      - name: PHP/Composer 버전 확인
-        run: php -v && composer --version
-
-      - name: MySQL 컨테이너 기동
+      # PHP 는 러너 머신에 설치된 것을 그대로 쓴다(shivammathur/setup-php 미사용) — 그 액션은
+      # self-hosted 러너에서 런타임을 다시 설치·relink 하다 다른 프로젝트 러너와 충돌한다.
+      # 대신 전제 조건(버전·커버리지 드라이버)을 여기서 명시적으로 검사해, 러너 환경이
+      # 어긋났을 때 뒤쪽 스텝에서 애매하게 실패하지 않고 즉시 원인을 드러내게 한다.
+      - name: PHP/Composer 환경 점검
         run: |
-          docker rm -f -v "$CI_MYSQL_CONTAINER" >/dev/null 2>&1 || true
-          docker run -d --name "$CI_MYSQL_CONTAINER" \
-            -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \
-            -e MYSQL_DATABASE=aicopia_test \
-            -p "${CI_MYSQL_PORT}:3306" \
-            mysql:8.0
+          php -v && composer --version
+          php -r 'exit(version_compare(PHP_VERSION, "8.5", ">=") ? 0 : 1);' \
+            || { echo "::error::composer.json 이 PHP 8.5 이상을 요구한다 (러너: $(php -r 'echo PHP_VERSION;'))"; exit 1; }
+          # 커버리지 드라이버가 없으면 커버리지 리포트가 조용히 비어버린다.
+          php -r 'exit(extension_loaded("pcov") || extension_loaded("xdebug") ? 0 : 1);' \
+            || { echo "::error::커버리지 드라이버가 없다. 러너에 pcov 또는 xdebug 를 설치할 것"; exit 1; }
+
+      - name: Validate composer.json
+        run: composer validate --strict
 
       - name: Install dependencies
         run: composer install --no-interaction --no-progress --prefer-dist
@@ -97,6 +65,26 @@ jobs:
           [ -e system ] || ln -s vendor/codeigniter4/framework/system system
           [ -f spark ] || cp vendor/codeigniter4/framework/spark spark
           mkdir -p writable/cache writable/logs writable/session writable/tmp writable/uploads
+
+      - name: 코드 스타일 검사 (PHP-CS-Fixer)
+        run: composer cs
+
+      - name: 정적 분석 (PHPStan)
+        run: composer analyse
+
+      - name: 의존성 취약점 점검 (composer audit)
+        run: composer audit --no-dev || true
+
+      # MySQL을 docker run으로 직접 기동한다. 러너 호스트에 다른 MySQL 프로세스가 떠 있을 수
+      # 있어 충돌을 피하려고 CI 전용 컨테이너는 호스트 포트 13306을 사용한다.
+      - name: MySQL 컨테이너 기동
+        run: |
+          docker rm -f -v "$CI_MYSQL_CONTAINER" >/dev/null 2>&1 || true
+          docker run -d --name "$CI_MYSQL_CONTAINER" \
+            -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \
+            -e MYSQL_DATABASE=aicopia_test \
+            -p "${CI_MYSQL_PORT}:3306" \
+            mysql:8.0
 
       # 마이그레이션은 MySQL 전용 DDL을 쓰므로 SQLite 불가 → MySQL 컨테이너 사용.
       # 테스트는 $DBGroup='tests'($migrate=false)이므로 미리 마이그레이션해야 한다.
@@ -142,11 +130,58 @@ jobs:
 
       # ParaTest worker(TEST_TOKEN 1..4)별 전용 DB(aicopia_test_1..4)를 템플릿에서 복제.
       # 공유 DB 충돌(하드코딩 unique 값·수동 정리)을 피하려면 worker마다 DB가 분리돼야 한다.
+      #
+      # MYSQL_DOCKER_CONTAINER 로 컨테이너 안의 mysql/mysqldump 를 쓴다. 러너에 깔린
+      # 클라이언트는 MariaDB 판일 수 있는데, 거기엔 --set-gtid-purged 가 없어
+      # `mysqldump: unknown variable 'set-gtid-purged=OFF'`(exit 7)로 죽는다.
+      # 서버와 같은 이미지의 클라이언트를 쓰면 이 부류의 버전 불일치가 사라진다.
       - name: 병렬 테스트 worker DB 프로비저닝
-        run: MYSQL_PWD='' bash bin/clone-test-dbs.sh 4 127.0.0.1 root aicopia_test "${CI_MYSQL_PORT}"
+        run: |
+          MYSQL_PWD='' MYSQL_DOCKER_CONTAINER="$CI_MYSQL_CONTAINER" \
+            bash bin/clone-test-dbs.sh 4 127.0.0.1 root aicopia_test "${CI_MYSQL_PORT}"
 
-      - name: 단위 테스트 (ParaTest 병렬)
-        run: composer test:parallel
+      # 테스트와 커버리지를 한 번에 뽑는다(로컬 실측 43초) — 커버리지를 따로 돌리면
+      # 같은 스위트를 두 번 실행하게 된다.
+      - name: 단위 테스트 + 커버리지 (ParaTest 병렬)
+        run: composer test:coverage
+
+      - name: 커버리지 요약을 잡 서머리에 첨부
+        if: always()
+        run: |
+          if [ -f build/coverage.txt ]; then
+            {
+              echo '### 📊 커버리지'
+              echo '```'
+              cat build/coverage.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # irongut/CodeCoverageSummary 는 Docker 컨테이너 액션이다. 러너가 Linux 라 액션으로
+      # 바로 쓸 수도 있지만, 커버리지 게시는 부가 정보라 실패해도 파이프라인을 막지 않도록
+      # continue-on-error 를 건다.
+      - name: 커버리지 마크다운 생성
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: build/cobertura.xml
+          badge: true
+          fail_below_min: false
+          format: markdown
+          hide_branch_rate: false
+          hide_complexity: false
+          indicators: true
+          output: file
+          thresholds: '50 75'
+
+      - name: 커버리지 PR 코멘트
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          recreate: true
+          path: code-coverage-results.md
 
       # self-hosted 러너는 다음 잡·다음 실행에도 같은 디스크를 재사용하므로 컨테이너는 반드시 정리한다.
       - name: MySQL 컨테이너 정리
@@ -157,8 +192,8 @@ jobs:
   # SLACK_WEBHOOK_URL 시크릿이 없으면 조용히 건너뛴다(파이프라인에 영향 없음).
   notify:
     name: Slack 알림 (실패 시)
-    runs-on: [self-hosted, macOS, ARM64]
-    needs: [static, test]
+    runs-on: [self-hosted, Linux, X64]
+    needs: [quality]
     if: failure()
     env:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -191,9 +226,7 @@ jobs:
                       - type: mrkdwn
                         text: "*커밋*\n<${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|커밋 보기>"
                       - type: mrkdwn
-                        text: "*코드 스타일 · 정적 분석*\n${{ needs.static.result == 'success' && '✅ 통과' || needs.static.result == 'failure' && '❌ 실패' || '⏭️ 취소/건너뜀' }}"
-                      - type: mrkdwn
-                        text: "*단위 테스트*\n${{ needs.test.result == 'success' && '✅ 통과' || needs.test.result == 'failure' && '❌ 실패' || '⏭️ 취소/건너뜀' }}"
+                        text: "*품질 게이트*\n${{ needs.quality.result == 'success' && '✅ 통과' || needs.quality.result == 'failure' && '❌ 실패' || '⏭️ 취소/건너뜀' }}"
                   - type: section
                     text:
                       type: mrkdwn

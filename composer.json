@@ -26,6 +26,7 @@
     "scripts": {
         "test": "phpunit",
         "test:parallel": "paratest -p4 --runner=WrapperRunner",
+        "test:coverage": "paratest -p4 --runner=WrapperRunner --coverage-text=build/coverage.txt --coverage-cobertura=build/cobertura.xml",
         "analyse": "phpstan analyse",
         "cs": "php-cs-fixer fix --dry-run --diff",
         "cs-fix": "php-cs-fixer fix",

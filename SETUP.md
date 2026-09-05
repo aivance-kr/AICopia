@@ -14,7 +14,7 @@ CodeIgniter 4 기반 쇼핑몰 솔루션 AICopia의 로컬 개발 환경 설치 
 ## 1. 저장소 클론
 
 ```bash
-git clone https://github.com/pushwing/AICopia.git
+git clone https://github.com/aivance-kr/AICopia.git
 cd AICopia
 git checkout dev
 ```
