@@ -83,3 +83,6 @@ node_modules/
 
 # superpowers 작업 스크래치
 .superpowers/
+
+# CI 커버리지 요약 산출물(irongut/CodeCoverageSummary)
+/code-coverage-results.md
