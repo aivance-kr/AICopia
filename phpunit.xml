@@ -3,6 +3,7 @@
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
     bootstrap="tests/bootstrap.php"
+    cacheDirectory="build/.phpunit.cache"
     backupGlobals="false"
     colors="true"
     columns="max"
@@ -12,6 +13,20 @@
             <directory>./tests</directory>
         </testsuite>
     </testsuites>
+
+    <!-- 커버리지 대상 — app/ 전체에서 코드가 아닌 계층은 제외한다.
+         Views(템플릿)·Config(설정 값)·Migrations(스키마 DDL)는 로직이 없어
+         커버리지 수치를 왜곡한다. -->
+    <source>
+        <include>
+            <directory suffix=".php">./app</directory>
+        </include>
+        <exclude>
+            <directory suffix=".php">./app/Views</directory>
+            <directory suffix=".php">./app/Config</directory>
+            <directory suffix=".php">./app/Database/Migrations</directory>
+        </exclude>
+    </source>
 
     <php>
         <server name="app.baseURL" value="http://localhost:8200/"/>

@@ -91,12 +91,12 @@ php spark migrate --all      # default 그룹에 테이블 생성
 composer test                # tests 그룹이 같은 DB를 읽음
 ```
 
-- 운영 DB는 절대 사용 금지. CI는 `.github/workflows/ci.yml`의 `test` 잡이 동일 흐름을 MySQL 서비스로 자동 수행.
+- 운영 DB는 절대 사용 금지. CI는 `.github/workflows/ci.yml`의 `quality` 잡이 동일 흐름을 MySQL 컨테이너로 자동 수행.
 - 새 기능(특히 Service/Model 로직)은 테스트를 함께 작성.
 
 ### 병렬 테스트 (ParaTest) — CI 기본
 
-CI는 `composer test`(순차) 대신 **`composer test:parallel`**(ParaTest 4-worker)로 실행해 시간을 대폭 단축한다(로컬 실측 77초 → 22초).
+CI는 `composer test`(순차) 대신 **`composer test:coverage`**(ParaTest 4-worker + 커버리지)로 실행해 시간을 대폭 단축한다(로컬 실측 순차 140초 → 병렬+커버리지 43초). 커버리지가 필요 없는 로컬 실행은 `composer test:parallel`이 같은 병렬 실행을 커버리지 없이 돈다.
 
 - 테스트는 트랜잭션으로 격리되지 않고 **실제 커밋 + `tearDown()` 수동 정리**를 쓴다. 따라서 worker가 DB를 공유하면 하드코딩된 unique 값 충돌·락 경합이 발생 → **worker별 전용 DB가 필수**.
 - ParaTest는 worker마다 `TEST_TOKEN`(1..N)을 주입한다. `tests/bootstrap.php`가 이를 읽어 `tests` 그룹 DB명을 `aicopia_test_<token>`으로 바꾼다(testing 환경은 `defaultGroup='tests'`라 모든 연결이 따라온다). `TEST_TOKEN`이 없으면 순차 실행이라 그대로 `aicopia_test`.
@@ -126,10 +126,10 @@ on:
 
 ### self-hosted 러너에서 돈다
 
-GitHub 호스팅 러너(`ubuntu-latest`)가 아니라 self-hosted Linux(X64) 머신을 러너로 등록해서 돈다. `static`·`test`·`notify` 세 잡 모두 `runs-on: [self-hosted, Linux, X64]`.
+GitHub 호스팅 러너(`ubuntu-latest`)가 아니라 self-hosted Linux(X64) 머신을 러너로 등록해서 돈다. `quality`·`notify` 두 잡 모두 `runs-on: [self-hosted, Linux, X64]`. 스타일·정적분석·테스트·커버리지는 `quality` 한 잡에 모여 있다 — 러너가 1대라 잡을 쪼개면 checkout·`composer install`·MySQL 기동이 중복되고, 커버리지를 별도 잡으로 두면 같은 스위트를 한 번 더 돌리게 된다.
 
-- **PHP/Composer**: 러너 머신에 이미 설치된 것을 그대로 쓴다(`shivammathur/setup-php` 액션 없이 `php`/`composer`가 PATH에 있다고 가정) — 버전은 개발 환경과 동일하게 유지해야 한다.
-- **MySQL**: Linux 러너는 `services:` 도커 컨테이너도 지원하지만, 이 저장소는 `test` 잡에서 `docker run`으로 직접 기동하고 `if: always()` 스텝으로 정리하는 방식을 쓴다(러너 호스트에 다른 MySQL 프로세스가 떠 있을 가능성을 대비한 포트 분리 때문).
+- **PHP/Composer**: 러너 머신에 이미 설치된 것을 그대로 쓴다(`shivammathur/setup-php` 액션 없이 `php`/`composer`가 PATH에 있다고 가정) — 그 액션은 self-hosted 러너에서 런타임을 다시 설치·relink 하다 다른 프로젝트 러너와 충돌한다. 버전은 개발 환경과 동일하게 유지해야 하며, `quality` 잡 첫 스텝이 PHP 8.5 이상 + 커버리지 드라이버(pcov/xdebug) 설치 여부를 검사해 어긋나면 즉시 실패시킨다.
+- **MySQL**: Linux 러너는 `services:` 도커 컨테이너도 지원하지만, 이 저장소는 `quality` 잡에서 `docker run`으로 직접 기동하고 `if: always()` 스텝으로 정리하는 방식을 쓴다(러너 호스트에 다른 MySQL 프로세스가 떠 있을 가능성을 대비한 포트 분리 때문).
 - **포트**: CI 전용 MySQL 컨테이너는 호스트 포트 **13306**을 쓴다(`CI_MYSQL_PORT` env로 오버라이드 가능). 러너 호스트가 기본 포트 3306을 쓰는 다른 프로세스와 공유될 수 있어 충돌을 피한다. `bin/clone-test-dbs.sh`도 5번째 인자로 포트를 받는다.
 - **러너 등록(1회)**: `bin/setup-ci-runner.sh` 실행 한 번으로 끝난다.
 
@@ -142,4 +142,4 @@ bin/setup-ci-runner.sh
 - 이미 등록돼 있으면 재설치 없이 상태만 출력하고 종료한다(중복 등록 방지).
 - 상태 확인/중지/제거 명령은 스크립트 실행 마지막에 출력된다.
 
-- **호스팅 러너로 되돌리려면**: `runs-on`을 `ubuntu-latest`로 바꾸고, `test` 잡의 `docker run` MySQL 기동 스텝을 `services:` 블록으로 바꾸면 된다(포트도 표준값 3306으로 원복 가능).
+- **호스팅 러너로 되돌리려면**: `runs-on`을 `ubuntu-latest`로 바꾸고, `quality` 잡의 `docker run` MySQL 기동 스텝을 `services:` 블록으로 바꾸면 된다(포트도 표준값 3306으로 원복 가능).
