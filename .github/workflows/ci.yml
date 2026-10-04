@@ -30,7 +30,8 @@ jobs:
       contents: read
       pull-requests: write
     env:
-      CI_MYSQL_PORT: '13306'
+      CI_MYSQL_PORT: '3306'
+      CI_MYSQL_NETWORK: aicopia-ci-net-${{ github.run_id }}
       CI_MYSQL_CONTAINER: aicopia-ci-mysql-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +40,43 @@ jobs:
       # self-hosted 러너에서 런타임을 다시 설치·relink 하다 다른 프로젝트 러너와 충돌한다.
       # 대신 전제 조건(버전·커버리지 드라이버)을 여기서 명시적으로 검사해, 러너 환경이
       # 어긋났을 때 뒤쪽 스텝에서 애매하게 실패하지 않고 즉시 원인을 드러내게 한다.
+      - name: PHP 8.5+ 보장 (러너 이미지 편차 대응)
+        run: |
+          APT="sudo apt-get -o DPkg::Lock::Timeout=300"
+          php_ok() { command -v php >/dev/null && php -r 'exit(version_compare(PHP_VERSION, "8.5", ">=") ? 0 : 1);'; }
+          # 조직 러너 이미지가 제각각이다 — ondrej PPA 가 붙은 러너는 php-cli 가 8.5 지만,
+          # 네이티브 Ubuntu 24.04 러너(runner-03)는 8.3.6 이라 composer.json 요구를 못 채워
+          # composer install 이 실패했다. 8.5 미만이면 PPA 로 8.5 를 설치해 기본 php 로 지정한다.
+          # (Ubuntu 26.04 러너는 네이티브가 8.5 라 이 분기를 타지 않는다.)
+          if ! php_ok; then
+            $APT update -qq
+            command -v php >/dev/null || $APT install -y --no-install-recommends php-cli
+            if ! php_ok; then
+              $APT install -y --no-install-recommends software-properties-common
+              sudo add-apt-repository -y ppa:ondrej/php
+              $APT update -qq
+              $APT install -y --no-install-recommends php8.5-cli
+              sudo update-alternatives --set php /usr/bin/php8.5
+            fi
+          fi
+          # 확장은 지금 PATH 의 php 버전에 맞춰 버전 명시 패키지로, 없는 것만 설치한다
+          # (버전 없는 php-intl 등은 다른 버전을 끌어와 쓰는 php 에 안 붙을 수 있다).
+          V="$(php -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;')"
+          MISSING=""
+          for item in mbstring:mbstring intl:intl mysql:mysqli xml:dom curl:curl zip:zip sqlite3:sqlite3; do
+            php -m | grep -qix "${item#*:}" || MISSING="$MISSING php${V}-${item%%:*}"
+          done
+          # 커버리지 드라이버(pcov/xdebug)가 없으면 phpunit 이 경고 → failOnWarning 으로 실패한다.
+          php -m | grep -qiE '^(pcov|xdebug)$' || MISSING="$MISSING php${V}-xdebug"
+          if [ -n "$MISSING" ]; then
+            echo "설치 필요:$MISSING"
+            $APT update -qq
+            $APT install -y --no-install-recommends $MISSING
+          fi
+          command -v composer >/dev/null || $APT install -y --no-install-recommends composer
+          php -v
+          composer --version
+
       - name: PHP/Composer 환경 점검
         run: |
           php -v && composer --version
@@ -75,15 +113,19 @@ jobs:
       - name: 의존성 취약점 점검 (composer audit)
         run: composer audit --no-dev || true
 
-      # MySQL을 docker run으로 직접 기동한다. 러너 호스트에 다른 MySQL 프로세스가 떠 있을 수
-      # 있어 충돌을 피하려고 CI 전용 컨테이너는 호스트 포트 13306을 사용한다.
+      # MySQL을 docker run으로 직접 기동한다. 러너가 도커 컨테이너라 호스트에 게시한 포트
+      # (127.0.0.1)에는 닿지 못한다("Connection refused"). 실행별 전용 네트워크에 러너와
+      # MySQL 을 같이 붙이고 컨테이너 이름으로 접속한다 — 호스트 포트를 쓰지 않으므로
+      # 같은 호스트의 동시 잡끼리 포트가 겹칠 일도 없다.
       - name: MySQL 컨테이너 기동
         run: |
           docker rm -f -v "$CI_MYSQL_CONTAINER" >/dev/null 2>&1 || true
+          docker network create "$CI_MYSQL_NETWORK"
+          docker network connect "$CI_MYSQL_NETWORK" "$(hostname)"
           docker run -d --name "$CI_MYSQL_CONTAINER" \
             -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \
             -e MYSQL_DATABASE=aicopia_test \
-            -p "${CI_MYSQL_PORT}:3306" \
+            --network "$CI_MYSQL_NETWORK" \
             mysql:8.0
 
       # 마이그레이션은 MySQL 전용 DDL을 쓰므로 SQLite 불가 → MySQL 컨테이너 사용.
@@ -104,13 +146,13 @@ jobs:
           {
             echo ""
             echo "CI_ENVIRONMENT = development"
-            echo "database.default.hostname = 127.0.0.1"
+            echo "database.default.hostname = ${CI_MYSQL_CONTAINER}"
             echo "database.default.database = aicopia_test"
             echo "database.default.username = root"
             echo "database.default.password ="
             echo "database.default.DBPrefix ="
             echo "database.default.port = ${CI_MYSQL_PORT}"
-            echo "database.tests.hostname = 127.0.0.1"
+            echo "database.tests.hostname = ${CI_MYSQL_CONTAINER}"
             echo "database.tests.database = aicopia_test"
             echo "database.tests.username = root"
             echo "database.tests.password ="
@@ -121,7 +163,7 @@ jobs:
       - name: Wait for MySQL
         run: |
           for i in $(seq 1 30); do
-            mysqladmin ping -h 127.0.0.1 -P "${CI_MYSQL_PORT}" -uroot --silent && break
+            mysqladmin ping -h "$CI_MYSQL_CONTAINER" -P "${CI_MYSQL_PORT}" -uroot --silent && break
             sleep 2
           done
 
@@ -186,7 +228,10 @@ jobs:
       # self-hosted 러너는 다음 잡·다음 실행에도 같은 디스크를 재사용하므로 컨테이너는 반드시 정리한다.
       - name: MySQL 컨테이너 정리
         if: always()
-        run: docker rm -f -v "$CI_MYSQL_CONTAINER" >/dev/null 2>&1 || true
+        run: |
+          docker rm -f -v "$CI_MYSQL_CONTAINER" >/dev/null 2>&1 || true
+          docker network disconnect -f "$CI_MYSQL_NETWORK" "$(hostname)" >/dev/null 2>&1 || true
+          docker network rm "$CI_MYSQL_NETWORK" >/dev/null 2>&1 || true
 
   # Slack 알림 — CI가 실패했을 때만 발송(성공 알림은 노이즈라 생략).
   # SLACK_WEBHOOK_URL 시크릿이 없으면 조용히 건너뛴다(파이프라인에 영향 없음).
