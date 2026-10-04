@@ -25,7 +25,7 @@ jobs:
   # 커버리지를 별도 잡으로 두면 같은 스위트를 한 번 더 돌리게 된다.
   quality:
     name: 코드 스타일 · 정적 분석 · 테스트 · 커버리지
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, docker]
     permissions:
       contents: read
       pull-requests: write
@@ -192,7 +192,7 @@ jobs:
   # SLACK_WEBHOOK_URL 시크릿이 없으면 조용히 건너뛴다(파이프라인에 영향 없음).
   notify:
     name: Slack 알림 (실패 시)
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, docker]
     needs: [quality]
     if: failure()
     env:
