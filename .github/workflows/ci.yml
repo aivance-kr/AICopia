@@ -40,6 +40,43 @@ jobs:
       # self-hosted 러너에서 런타임을 다시 설치·relink 하다 다른 프로젝트 러너와 충돌한다.
       # 대신 전제 조건(버전·커버리지 드라이버)을 여기서 명시적으로 검사해, 러너 환경이
       # 어긋났을 때 뒤쪽 스텝에서 애매하게 실패하지 않고 즉시 원인을 드러내게 한다.
+      - name: PHP 8.5+ 보장 (러너 이미지 편차 대응)
+        run: |
+          APT="sudo apt-get -o DPkg::Lock::Timeout=300"
+          php_ok() { command -v php >/dev/null && php -r 'exit(version_compare(PHP_VERSION, "8.5", ">=") ? 0 : 1);'; }
+          # 조직 러너 이미지가 제각각이다 — ondrej PPA 가 붙은 러너는 php-cli 가 8.5 지만,
+          # 네이티브 Ubuntu 24.04 러너(runner-03)는 8.3.6 이라 composer.json 요구를 못 채워
+          # composer install 이 실패했다. 8.5 미만이면 PPA 로 8.5 를 설치해 기본 php 로 지정한다.
+          # (Ubuntu 26.04 러너는 네이티브가 8.5 라 이 분기를 타지 않는다.)
+          if ! php_ok; then
+            $APT update -qq
+            command -v php >/dev/null || $APT install -y --no-install-recommends php-cli
+            if ! php_ok; then
+              $APT install -y --no-install-recommends software-properties-common
+              sudo add-apt-repository -y ppa:ondrej/php
+              $APT update -qq
+              $APT install -y --no-install-recommends php8.5-cli
+              sudo update-alternatives --set php /usr/bin/php8.5
+            fi
+          fi
+          # 확장은 지금 PATH 의 php 버전에 맞춰 버전 명시 패키지로, 없는 것만 설치한다
+          # (버전 없는 php-intl 등은 다른 버전을 끌어와 쓰는 php 에 안 붙을 수 있다).
+          V="$(php -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;')"
+          MISSING=""
+          for item in mbstring:mbstring intl:intl mysql:mysqli xml:dom curl:curl zip:zip sqlite3:sqlite3; do
+            php -m | grep -qix "${item#*:}" || MISSING="$MISSING php${V}-${item%%:*}"
+          done
+          # 커버리지 드라이버(pcov/xdebug)가 없으면 phpunit 이 경고 → failOnWarning 으로 실패한다.
+          php -m | grep -qiE '^(pcov|xdebug)$' || MISSING="$MISSING php${V}-xdebug"
+          if [ -n "$MISSING" ]; then
+            echo "설치 필요:$MISSING"
+            $APT update -qq
+            $APT install -y --no-install-recommends $MISSING
+          fi
+          command -v composer >/dev/null || $APT install -y --no-install-recommends composer
+          php -v
+          composer --version
+
       - name: PHP/Composer 환경 점검
         run: |
           php -v && composer --version
