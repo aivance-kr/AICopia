@@ -126,7 +126,12 @@ jobs:
             -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \
             -e MYSQL_DATABASE=aicopia_test \
             --network "$CI_MYSQL_NETWORK" \
-            mysql:8.0
+            --tmpfs /var/lib/mysql \
+            mysql:8.0 \
+            --innodb-flush-log-at-trx-commit=0 \
+            --innodb-flush-method=nosync \
+            --sync-binlog=0 \
+            --innodb-redo-log-capacity=536870912
 
       # 마이그레이션은 MySQL 전용 DDL을 쓰므로 SQLite 불가 → MySQL 컨테이너 사용.
       # 테스트는 $DBGroup='tests'($migrate=false)이므로 미리 마이그레이션해야 한다.
