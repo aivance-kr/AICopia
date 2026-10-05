@@ -30,6 +30,9 @@ jobs:
       contents: read
       pull-requests: write
     env:
+      # 커버리지 드라이버가 xdebug 면 모드를 켜야 paratest --coverage-* 가 동작한다
+      # ("XDEBUG_MODE=coverage ... has to be set"). pcov 가 설치된 러너에서는 무시된다.
+      XDEBUG_MODE: coverage
       CI_MYSQL_PORT: '3306'
       CI_MYSQL_NETWORK: aicopia-ci-net-${{ github.run_id }}
       CI_MYSQL_CONTAINER: aicopia-ci-mysql-${{ github.run_id }}
