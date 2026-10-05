@@ -207,23 +207,19 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # irongut/CodeCoverageSummary 는 Docker 컨테이너 액션이다. 러너가 Linux 라 액션으로
-      # 바로 쓸 수도 있지만, 커버리지 게시는 부가 정보라 실패해도 파이프라인을 막지 않도록
-      # continue-on-error 를 건다.
       - name: 커버리지 마크다운 생성
         if: github.event_name == 'pull_request'
-        continue-on-error: true
-        uses: irongut/CodeCoverageSummary@v1.3.0
-        with:
-          filename: build/cobertura.xml
-          badge: true
-          fail_below_min: false
-          format: markdown
-          hide_branch_rate: false
-          hide_complexity: false
-          indicators: true
-          output: file
-          thresholds: '50 75'
+        # irongut/CodeCoverageSummary 는 Docker 컨테이너 액션이다. 러너가 도커 컨테이너라
+        # 액션 컨테이너에 마운트되는 /github/workspace 에 이 러너의 작업 디렉터리가 보이지
+        # 않아 "No files found matching glob pattern" 으로 죽는다. 이미 생성된
+        # build/coverage.txt 로 PR 코멘트용 마크다운을 직접 만든다.
+        run: |
+          {
+            echo '### 📊 커버리지'
+            echo '```'
+            cat build/coverage.txt
+            echo '```'
+          } > code-coverage-results.md
 
       - name: 커버리지 PR 코멘트
         if: github.event_name == 'pull_request'
