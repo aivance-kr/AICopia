@@ -66,6 +66,16 @@ class PageController extends BaseController
         // AI 자동 분류 (백그라운드 워커가 처리)
         \App\Libraries\AiProvider\InquiryClassifyHandler::enqueue($inquiryId);
 
+        // 운영 채널 Slack 알림 (실패해도 접수에는 영향 없음)
+        \App\Libraries\SlackInquiryNotifier::fromEnv('AICopia')->notify($inquiryId, [
+            '이름'      => (string) $this->request->getPost('name'),
+            '이메일'    => (string) $this->request->getPost('email'),
+            '연락처'    => (string) $this->request->getPost('phone'),
+            '제목'      => (string) $this->request->getPost('subject'),
+            '접수 시각' => date('Y-m-d H:i:s'),
+            '요청 IP'   => $this->request->getIPAddress(),
+        ], (string) $this->request->getPost('message'), base_url('admin/inquiries/' . $inquiryId));
+
         // 관리자 이메일 발송 (설정에서 수신 이메일 읽기)
         $toEmail = $this->viewData['settings']['email'] ?? '';
         if ($toEmail) {
