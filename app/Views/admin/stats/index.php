@@ -3,6 +3,7 @@
 <?= $this->section('content') ?>
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h4 class="mb-0">접속 통계</h4>
+    <a href="<?= base_url('admin/stats/paths') ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-signpost-split me-1"></i>이동 경로</a>
 </div>
 
 <!-- 기간 선택 -->

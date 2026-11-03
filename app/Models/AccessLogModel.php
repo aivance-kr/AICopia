@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use CodeIgniter\I18n\Time;
 use CodeIgniter\Model;
 
 class AccessLogModel extends Model
@@ -24,6 +25,28 @@ class AccessLogModel extends Model
         )->getRow()->cnt;
 
         return ['pv' => $pv, 'uv' => $uv];
+    }
+
+    /**
+     * 이동 경로 분석용 방문 행 ([시작, 끝) 기간, 오래된 순). PathAnalyzer 입력 형식(uri, ip_address)으로 별칭을 맞춘다.
+     *
+     * @return array{rows: list<array{uri: string, ip_address: string, user_agent: string|null, created_at: string}>, truncated: bool}
+     */
+    public function visitsForPaths(Time $start, Time $end, int $limit = 50000): array
+    {
+        /** @var list<array{uri: string, ip_address: string, user_agent: string|null, created_at: string}> $rows */
+        $rows = $this->db->table($this->table)
+            ->select('page AS uri, ip AS ip_address, user_agent, created_at')
+            ->where('created_at >=', $start->toDateTimeString())
+            ->where('created_at <', $end->toDateTimeString())
+            ->orderBy('id', 'ASC')
+            ->limit($limit + 1)
+            ->get()
+            ->getResultArray();
+
+        $truncated = count($rows) > $limit;
+
+        return ['rows' => $truncated ? array_slice($rows, 0, $limit) : $rows, 'truncated' => $truncated];
     }
 
     /** 보존 기간(일) 이전 로그를 집계 테이블에 저장 후 삭제 */
