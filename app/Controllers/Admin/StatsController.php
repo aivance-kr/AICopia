@@ -5,11 +5,17 @@ declare(strict_types=1);
 namespace App\Controllers\Admin;
 
 use App\Controllers\BaseController;
+use App\Libraries\PathAnalyzer;
 use App\Models\AccessLogModel;
+use CodeIgniter\I18n\Time;
 use Config\Database;
 
 class StatsController extends BaseController
 {
+    private const PATH_STATS_DAYS = [7, 30, 90];
+
+    private const PATH_STATS_CACHE_TTL = 600;
+
     /** GET /admin/stats */
     public function index(): string
     {
@@ -165,5 +171,34 @@ class StatsController extends BaseController
             'todayPv'          => $todayStats['pv'],
             'todayUv'          => $todayStats['uv'],
         ]);
+    }
+
+    /**
+     * 이동 경로 통계: 세션(30분 무활동 기준)별 진입·이탈 페이지, 페이지 간 이동, 자주 걷는 경로.
+     * ?page=/주소 를 주면 그 페이지의 직전·직후 이동을 보여준다. 10분 캐시.
+     */
+    public function paths(): string
+    {
+        $days = (int) ($this->request->getGet('days') ?? 30);
+        $days = in_array($days, self::PATH_STATS_DAYS, true) ? $days : 30;
+        $page = (string) ($this->request->getGet('page') ?? '');
+        $page = ($page !== '' && $page[0] === '/' && strlen($page) <= 500) ? $page : null;
+
+        $stats = cache()->remember(
+            'admin_path_stats_' . $days . '_' . md5((string) $page),
+            self::PATH_STATS_CACHE_TTL,
+            static function () use ($days, $page): array {
+                $end   = Time::now();
+                $start = Time::now()->subDays($days - 1)->setTime(0, 0, 0);
+                $data  = (new AccessLogModel())->visitsForPaths($start, $end);
+
+                return [
+                    'result'    => PathAnalyzer::analyze(PathAnalyzer::buildSessions($data['rows']), $page),
+                    'truncated' => $data['truncated'],
+                ];
+            },
+        );
+
+        return $this->render('admin/stats/paths', $stats + ['days' => $days, 'dayOptions' => self::PATH_STATS_DAYS, 'page' => $page]);
     }
 }

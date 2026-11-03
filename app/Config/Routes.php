@@ -257,6 +257,7 @@ $routes->group('admin', ['filter' => 'auth:admin'], function ($routes) {
 
     // 접속 통계
     $routes->get('stats', 'Admin\StatsController::index');
+    $routes->get('stats/paths', 'Admin\StatsController::paths');
 
     // 매입처 관리
     $routes->get('suppliers', 'Admin\SupplierController::index');
