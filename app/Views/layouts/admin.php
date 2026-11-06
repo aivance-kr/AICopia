@@ -73,7 +73,7 @@
             str_starts_with($uri, 'admin/inquiries'), str_starts_with($uri, 'admin/qna'),
             str_starts_with($uri, 'admin/stats'), str_starts_with($uri, 'admin/menus'),
         ]);
-        $inSettings = str_starts_with($uri, 'admin/settings') || str_starts_with($uri, 'admin/schedule');
+        $inSettings = str_starts_with($uri, 'admin/settings') || str_starts_with($uri, 'admin/schedule') || str_starts_with($uri, 'admin/backup');
     ?>
     <nav class="mt-2">
         <!-- 콘텐츠 -->
@@ -165,6 +165,7 @@
             <a href="/admin/settings/theme"   class="nav-link <?= str_starts_with($uri, 'admin/settings/theme') ? 'active' : '' ?>"><i class="bi bi-palette me-2"></i>테마 관리</a>
             <a href="/admin/settings/oauth"   class="nav-link <?= $uri === 'admin/settings/oauth' ? 'active' : '' ?>"><i class="bi bi-people me-2"></i>소셜 로그인</a>
             <a href="/admin/schedule"         class="nav-link <?= str_starts_with($uri, 'admin/schedule') ? 'active' : '' ?>"><i class="bi bi-clock-history me-2"></i>배치 작업</a>
+            <a href="/admin/backup"           class="nav-link <?= str_starts_with($uri, 'admin/backup') ? 'active' : '' ?>"><i class="bi bi-hdd-stack me-2"></i>백업/복원</a>
         </div>
 
         <div class="nav-section mt-3">사이트</div>
