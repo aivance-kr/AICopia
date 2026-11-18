@@ -88,6 +88,13 @@ $routes->group('admin', ['filter' => 'auth:admin'], function ($routes) {
     $routes->post('media/(:num)/alt', 'Admin\MediaController::updateAlt/$1');
     $routes->post('media/(:num)/delete', 'Admin\MediaController::delete/$1');
 
+    // 백업 관리
+    $routes->get('backup', 'Admin\BackupController::index');
+    $routes->post('backup/create', 'Admin\BackupController::create');
+    $routes->get('backup/(:segment)', 'Admin\BackupController::download/$1');
+    $routes->post('backup/restore', 'Admin\BackupController::restore');
+    $routes->post('backup/restore-server', 'Admin\BackupController::restoreFromServer');
+
     // 사이트 설정
     $routes->get('settings', 'Admin\SettingController::index');
     $routes->get('settings/(:segment)', 'Admin\SettingController::index/$1');
