@@ -124,7 +124,12 @@ jobs:
         run: |
           docker rm -f -v "$CI_MYSQL_CONTAINER" >/dev/null 2>&1 || true
           docker network create "$CI_MYSQL_NETWORK"
-          docker network connect "$CI_MYSQL_NETWORK" "$(hostname)"
+          # 러너 컨테이너가 network_mode: host 면 $(hostname) 이 호스트 이름이라 컨테이너가 아니다
+          # (docker network connect 가 "No such container" 로 실패). 컨테이너일 때만 붙이고,
+          # 접속은 어느 쪽이든 되도록 컨테이너 IP 로 한다.
+          if docker inspect --type container "$(hostname)" >/dev/null 2>&1; then
+            docker network connect "$CI_MYSQL_NETWORK" "$(hostname)"
+          fi
           docker run -d --name "$CI_MYSQL_CONTAINER" \
             -e MYSQL_ALLOW_EMPTY_PASSWORD=yes \
             -e MYSQL_DATABASE=aicopia_test \
@@ -135,6 +140,12 @@ jobs:
             --innodb-flush-method=nosync \
             --sync-binlog=0 \
             --innodb-redo-log-capacity=536870912
+          MYSQL_IP="$(docker inspect -f "{{(index .NetworkSettings.Networks \"$CI_MYSQL_NETWORK\").IPAddress}}" "$CI_MYSQL_CONTAINER")"
+          case "$MYSQL_IP" in
+            [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::MySQL 컨테이너 IP 를 확인할 수 없습니다"; exit 1 ;;
+          esac
+          echo "CI_MYSQL_HOST=$MYSQL_IP" >> "$GITHUB_ENV"
 
       # 마이그레이션은 MySQL 전용 DDL을 쓰므로 SQLite 불가 → MySQL 컨테이너 사용.
       # 테스트는 $DBGroup='tests'($migrate=false)이므로 미리 마이그레이션해야 한다.
@@ -154,13 +165,13 @@ jobs:
           {
             echo ""
             echo "CI_ENVIRONMENT = development"
-            echo "database.default.hostname = ${CI_MYSQL_CONTAINER}"
+            echo "database.default.hostname = ${CI_MYSQL_HOST}"
             echo "database.default.database = aicopia_test"
             echo "database.default.username = root"
             echo "database.default.password ="
             echo "database.default.DBPrefix ="
             echo "database.default.port = ${CI_MYSQL_PORT}"
-            echo "database.tests.hostname = ${CI_MYSQL_CONTAINER}"
+            echo "database.tests.hostname = ${CI_MYSQL_HOST}"
             echo "database.tests.database = aicopia_test"
             echo "database.tests.username = root"
             echo "database.tests.password ="
@@ -171,7 +182,7 @@ jobs:
       - name: Wait for MySQL
         run: |
           for i in $(seq 1 30); do
-            mysqladmin ping -h "$CI_MYSQL_CONTAINER" -P "${CI_MYSQL_PORT}" -uroot --silent && break
+            mysqladmin ping -h "$CI_MYSQL_HOST" -P "${CI_MYSQL_PORT}" -uroot --silent && break
             sleep 2
           done
 
